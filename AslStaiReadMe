@@ -1,0 +1,136 @@
+Steps taken for data analyses for PNC ASL STAI neuroimaging paper:
+
+Replication directory: /import/speedy/eons/progs/ASL/kaczkurkinStai/
+
+1. Merge Kosha's final data set with Tyler's STAI factor scores (using script, "MergeSTAIData.R")
+        a. Before I did this, I sorted Kosha's data set by bblid to get the ids in ascending order
+2. Combine tanner boy 6 and tanner girl 7 items to create the tanner variable (script "Create_tanner_variable.R")
+        a. This also transforms age from months to years and creates the bitanner variable
+        b. Also changes sex and bitanner to factors
+3. Create new inclusion/exclusion variables (script "Exclusion_vars.R")
+        a. This list of possible exclusion variables is a bit of an overkill- but I just wanted to be thorough
+4. Create the cbf.paths.ants variable
+        a. Use script, "cbfpaths_IDlist.R," to create list of subjects with good asl data
+        b. Use script, "ASL_check_ants_n1601.sh," to find cbf paths
+        c. Add "bblid" and "cbf.paths.ants" as variable names to output file: n1601_cbfPaths.csv (I just did this by hand using emacs)
+        d. Merge output file with subject data (script "Merge_cbfpaths.R")
+5. Create the new mask
+        a. Run the flameo linear ASL script, "group_analysis_StateTraitGeneral.R" (which uses a pre-existing mask- not one tailored to our data sample yet).
+                1. This is done to get bblid.txt which will be used to create a new mask tailored to our sample.
+        b. Then run the script, "makeAslMask.sh" to assemble a list of masks and merge them (this uses bblid.txt from the asl analysis).
+        c. Check coverage with masks by opening the output file, "n875_masksCombined.nii.gz" in fslview. (visual inspection looks pretty good to me)
+        d. If coverage is bad, use fslmeants to find out who is causing your bad coverage; anyone with a “0” doesn’t have coverage:
+                fslmeants -i n875_masksCombined.nii.gz -c 19 43 24 -o n875_masksCombined_c194324.txt
+                Or for sensitivity analyses:
+                fslmeants -i n766_masksCombined.nii.gz -c 19 43 24 -o n766_masksCombined_c194324.txt
+        e. To mask your coverage mask by MNI grey matter prior use this command:
+                fslmaths n875_mask.nii.gz -mas avg152T1_gray_bin.nii.gz n875_mask_mniGrey.nii.gz
+                Or for sensitivity anaylyses:
+                fslmaths n766_mask.nii.gz -mas avg152T1_gray_bin.nii.gz n766_mask_mniGrey.nii.gz
+6. Get the grey matter density image paths (script "GMD_check_ants_n1601.sh")
+        a. The output is called n875_gmdPaths.csv (or for sensitivity analyses: n766_gmdPaths.csv)
+        b. Remove the bblid variable so it is just a list of gmd paths (I did this in excel).
+        c. Because I removed bblid in excel, I have hard returns in the file. To remove mac/windows (not unix) hard returns, type:
+                mac2unix n875_gmdPaths.csv
+7. Merge the GMD images into a 4d file (script "gmdImages4d.sh") (takes a long time)
+        a. Next, downsample the gmdImages file (first cd to /gmd_covariate and type this command):
+                fslmaths n875_gmdImages.nii.gz -subsamp2 n875_gmdImages_downsampled.nii.gz (also takes a while)
+                Or for sensitivity analyses:
+                fslmaths n766_gmdImages.nii.gz -subsamp2 n766_gmdImages_downsampled.nii.gz
+8. Re-run the asl voxelwise analyses with the flameo wrapper (with the new n875 mask just created in step 5) to get the 4d file of merged asl images
+        a. NOTE: This will overwrite the n875_cbf.paths.ants results because the script uses the same model and number of subjects.
+                If you want to save the original results, move the files in "n875_cbf.paths.ants" before running the script.
+        b. Use script "group_analysis_StateTraitGeneral_newMask.R"
+        c. This will also provide the mask.nii.gz file you'll need for the R-based voxelwise analyses (next step).
+9. Nonlinear (GAM) voxelwise analyses
+        a. Run the non-linear R-based voxelwise analyses with the script "GAM_VoxelwiseAnalyses.R" (or for linear results: "aslVoxelwiseAnalyses.R")
+        b. Before running this script, make sure the GMD 4d file has the same order of subjects, same image dimensions (i.e. 2mm isotropic), and same space (e.g. MNI) as the ASL 4d file.
+        c. Run script first without the pOut and tOut commands (don't need to let it finish all subjects- let it run for a few seconds and the use CNTRL-C to stop)
+        d. Then look at gamSum (or for the linear results: lmSummary) to get the correct p and t column/row numbers from the tables for the pOut and tOut commands.
+                1. Check with gamSum$p.table[?,?] or gamSum$s.table[?,?] (or for the linear results: lmSummary$coefficients[?,?])
+        e. Add these column/row values to the script where it specifies the p and t-values
+        f. Re-run the "GAM_VoxelwiseAnalyses.R" script
+10. Whole brain cluster correction
+        a. You will need to choose a voxelwise threshold (z) which determines which voxels are considered significant.
+                1. Open the data (gamT_Trait.nii.gz) in fslview and play around with different z values.
+                   (I chose z=2.58 to get adequate cluster separation, especially for the amygdala, but z=3.09/p=.001 was too stringent)
+        b. You also need to choose a cluster extent threshold, which determines the minimum size a cluster must have to be considered significant.
+                1. Run "AlphaSim_table.sh" to get the table which you will use to find the minimum cluster size that corresponds to your desired alpha level
+                   (I chose a min cluster size of 146 which corresponds to a p of .0001)
+        c. Next, use these two values (z and min cluster size) in easythresh to do cluster correction:
+                1. cd to /import/monstrum2/Users/antoniak/PNC_asl/voxelwise_analyses/n875_cbf.paths.ants/GAM_age_sex_aslMotion_gmdCovariate_State_General_12_Trait_General_12
+                2. Run the easyThreshAlphaSimUpsample script which specifies the voxelwise threshold (z=2.58) and the cluster extent threshold (146)
+                        ~/PNC_asl/scripts/easyThreshAlphaSimUpsample.sh gamT_Trait.nii.gz 2.58 146
+                        ~/PNC_asl/scripts/easyThreshAlphaSimUpsample.sh gamT_State.nii.gz 2.58 146
+                        Or if working off speedy:
+                        /import/speedy/eons/progs/ASL/kaczkurkinStai/kaczkurkinStaiScripts/easyThreshAlphaSimUpsample.sh gamT_Trait.nii.gz 2.58 146
+                        /import/speedy/eons/progs/ASL/kaczkurkinStai/kaczkurkinStaiScripts/easyThreshAlphaSimUpsample.sh gamT_State.nii.gz 2.58 146
+        d. NOTE: We decided to go ahead and use gamT_Trait.nii.gz with easyThresh because the "ptoz" command appears to penalize us in unclear ways and because with large sample sizes,
+                t and z are almost the same.
+11. Clusterwise analyses
+        a. Identify the cluster numbers for all regions that were significantly associated with Trait Anxiety during voxelwise analyses (e.g., left amygdala=104)
+                1. Open /easythresh/cluster_gamT_Trait_2.58_1.txt for a table of the clusters. Look at "Cluster Index": you only want the clusters that had 146 or more voxels.
+                        a. Using the Max x,y,z coordinates from this table, you can also navigate to the brain clusters to see their Harvard Atlas names.
+                2. Or you can also get the cluster index by clicking on a cluster of interest
+                        a. Open cluster_mask_gamT_Trait_2.58_1.nii.gz in fslview (need 2mm standard MNI image to overlay on)
+                        b. Look at the "intensity" value in the lower left hand corner of fslview.
+        b. Specify one of the clusters of interest in the script "clsVis_aslNonLinear_GMD_State_Trait.R"
+        c. Run the clsVis script to get the "y" variable (this is your mean CBF for the cluster you specified) and the "gmd" variable (mean GMD for the cluster specified)
+                NOTE: the commands for making pdfs have been commented out of the script but can be added back if desired
+        d. The y and GMD variables for the cluster specified have been appended to subjData. Rename these variables and save the dataset as "n875_PNCData.rds" (for later analyses):
+                names(subjData)[names(subjData)=="y"]<-"GAM_asl_LAmygdala"
+                names(subjData)[names(subjData)=="GMD"]<-"GAM_gmd_LAmygdala"
+                saveRDS(subjData, "/import/monstrum2/Users/antoniak/PNC_asl/subject_data/n875_PNCData.rds")
+                Or if working off Speedy:
+                saveRDS(subjData, "/import/speedy/eons/progs/ASL/kaczkurkinStai/subjectData/n875_PNCData.rds")
+        e. Repeat these steps for all clusters of interest.
+        f. Next, look for higher order interactions in regions found during voxelwise analyses to have a significant relationship with Trait Anxiety.
+                1. Use scripts:
+                        a. GAM_ClusterwiseRegressions_SexByBitanner.R
+                        b. GAM_ClusterwiseRegressions_TraitByAge.R
+                        c. GAM_ClusterwiseRegressions_TraitByBitanner.R
+                        d. GAM_ClusterwiseRegressions_TraitBySexByAge.R
+                        e. GAM_ClusterwiseRegressions_TraitBySexByBitanner.R
+                        f. GAM_ClusterwiseRegressions_TraitBySex.R
+                2. FDR correct these p-values (see script, "FDR_correction.R")
+                        a. FDR correct the age*sex results for all regions
+                        b. Of those regions with significant Trait*Age interactions, look for significant Trait*bitanner interactions and FDR correct those p-values.
+12. Mediation analyses
+        a. Save the file "n875_PNCData.rds" as a .csv file and transfer file from linux to the local computer.
+        b. Open in SPSS (make sure variables (sex, bitanner, Trait_General_12, State_General_12, and the brain clusters) are specified correctly as numeric and either nominal or scale)
+        c. Open Preacher and Hayes' "Indirect.sps" syntax, select all, and run (have to do every time you close SPSS)
+        d. Then see the syntax file, "Mediation.sps" for filters (e.g., filter out pre and mid-pubertal groups and only look at post-pubertal)
+        e. Run mediation models with covariates (age, ageSq, aslMotion, GMD)
+                1. We want a significant a path, significant b path, and a decrease or loss of significance from c to c' paths.
+                2. We also need the indirect effect to be significant (make sure the "Bias corrected confidence intervals" do not contain zero).
+        f. Use Preacher's online Sobel calculator to get the Sobel Test z and p-value.
+13. Making tables and figures
+        a. Use script "Figure1_Table1.R" to make the demographics table (Table 1) and Figure 1 (Trait and State Anxiety scores across categorical screening diagnoses)
+        b. Use the script "Figures2to5.R" to make Figures 2 through 5.
+                1. Figure 2: Perfusion by Trait Anxiety across amygdala, bilateral insula, and fusiform
+                2. Figure 3: Sex by Age graphs across amygdala, bilateral insula, and fusiform
+                3. Figure 4: Perfusion/Trait by Age across left amyg, bilateral insula
+                4. Figure 5: Perfusion/Trait by Bitanner in left amygdala
+        c. Take screen shots of relevant brain regions (L amygdala, bilateral insula, fusiform) using this image:
+                /n875_cbf.paths.ants/GAM_age_sex_aslMotion_gmdCovariate_State_Trait/easythresh_p005_cls146/gamT_Trait_2.58_clsz146_1mm.nii.gz
+                1. Combine images in photoshop:
+                        a. Crop image
+                        b. Get rid of black background using the magic wand tool and invert
+                        c. Add a drop shadow to the image
+        d. Mediation figure- create medation figure in Word.
+        e. Table 2: Regions associated with Trait Anxiety
+                1. Open easythresh_p005_cls146/cluster_gamT_Trait_2.58_1.txt table
+                        a. We want k (the number of voxels that make up the cluster, called "Voxels" in the table)
+                        b. Maximum z (called "MAX" in the cluster table)
+                        c. Peak MNI coordinates in voxels (called "MAX X (vox), MAX Y (vox), MAX Z (vox)")
+                2. Transfer this data to an excel spreadsheet to create Table 2
+                        a. We only want the clusters that meet or exceed our cluster extent threshold of 146 voxels.
+        f. Table 3: Sex by Age significant interactions
+                1. Report the F values, p-values, and FDR corrected p-values (from the sex by age analyses) in an excel file for the same regions reported in Table 2.
+        g. Supplimentary Tables S1 and S2:
+                1. Table S1 = GAM results for State and Trait in separate models
+                2. Table S2 = GAM results for sensitivity analyses (see below)
+14. Sensitivity Analyses (add mom edu and race and exclude those on PSYCHIATRIC psychotropic meds)
+        a. Starting with Step 5, follow the same steps (the scripts all have the same names, but also have "sensitivity" appended at the end).
+        b. NOTE: the sensitivity analyses have 766 subjects.
+
